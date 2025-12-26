@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using SteamKit2;
 using SteamKit2.CDN;
 
 namespace DepotDownloader
@@ -49,7 +50,12 @@ namespace DepotDownloader
                 {
                     // If we are using Lancache, we don't need to query Steam for servers
                     // But we need at least one server in the list to satisfy the loop
-                    servers.Add(new Server { Host = "lancache", Protocol = Protocol.HTTP, Type = "CDN" });
+                    var server = new Server();
+                    var type = typeof(Server);
+                    type.GetProperty("Host")?.SetValue(server, "lancache");
+                    type.GetProperty("Protocol")?.SetValue(server, Protocol.HTTP);
+                    type.GetProperty("Type")?.SetValue(server, "CDN");
+                    servers.Add(server);
                     return;
                 }
 
@@ -64,12 +70,14 @@ namespace DepotDownloader
                     throw new Exception("Failed to login anonymously for CDN server list.");
                 }
 
-                serverList = await anonymousSession.steamContent.GetServersForSteamPipe();
+                var servers = await anonymousSession.steamContent.GetServersForSteamPipe();
+                serverList = servers.ToList();
                 anonymousSession.Disconnect();
             }
             else
             {
-                serverList = await this.steamSession.steamContent.GetServersForSteamPipe();
+                var servers = await this.steamSession.steamContent.GetServersForSteamPipe();
+                serverList = servers.ToList();
             }
 
             ProxyServer = serverList.Where(x => x.UseAsProxy).FirstOrDefault();

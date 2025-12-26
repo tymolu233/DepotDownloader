@@ -26,16 +26,57 @@ namespace DepotDownloader
         {
             this.steamSession = steamSession;
             this.appId = appId;
-            CDNClient = new Client(steamSession.steamClient);
+
+            if (steamSession != null)
+            {
+                CDNClient = new Client(steamSession.steamClient);
+            }
+            else
+            {
+                var clientConfiguration = SteamConfiguration.Create(config =>
+                    config.WithHttpClientFactory(() => HttpClientFactory.CreateHttpClient()));
+                CDNClient = new Client(clientConfiguration);
+            }
         }
 
         public async Task UpdateServerList()
         {
-            var servers = await this.steamSession.steamContent.GetServersForSteamPipe();
+            List<Server> serverList;
 
-            ProxyServer = servers.Where(x => x.UseAsProxy).FirstOrDefault();
+            if (steamSession == null)
+            {
+                if (Client.UseLancacheServer)
+                {
+                    // If we are using Lancache, we don't need to query Steam for servers
+                    // But we need at least one server in the list to satisfy the loop
+                    servers.Add(new Server { Host = "lancache", Protocol = Protocol.HTTP, Type = "CDN" });
+                    return;
+                }
 
-            var weightedCdnServers = servers
+                Console.WriteLine("No active session, logging in anonymously to retrieve CDN servers...");
+                var anonymousSession = new Steam3Session(new SteamUser.LogOnDetails
+                {
+                    Username = null,
+                });
+
+                if (!anonymousSession.WaitForCredentials())
+                {
+                    throw new Exception("Failed to login anonymously for CDN server list.");
+                }
+
+                serverList = await anonymousSession.steamContent.GetServersForSteamPipe();
+                anonymousSession.Disconnect();
+            }
+            else
+            {
+                serverList = await this.steamSession.steamContent.GetServersForSteamPipe();
+            }
+
+            ProxyServer = serverList.Where(x => x.UseAsProxy).FirstOrDefault();
+
+            var weightedCdnServers = serverList
+
+            var weightedCdnServers = serverList
                 .Where(server =>
                 {
                     var isEligibleForApp = server.AllowedAppIds.Length == 0 || server.AllowedAppIds.Contains(appId);

@@ -75,8 +75,6 @@ namespace DepotDownloader
             ProxyServer = serverList.Where(x => x.UseAsProxy).FirstOrDefault();
 
             var weightedCdnServers = serverList
-
-            var weightedCdnServers = serverList
                 .Where(server =>
                 {
                     var isEligibleForApp = server.AllowedAppIds.Length == 0 || server.AllowedAppIds.Contains(appId);

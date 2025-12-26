@@ -10,7 +10,7 @@ namespace DepotDownloader
 {
     static class DepotKeysStore
     {
-        private static Dictionary<uint, byte[]> depotKeys = new();
+        private static readonly Dictionary<uint, byte[]> depotKeys = new();
         private static string currentFilePath;
 
         public static void LoadFromFile(string filename)

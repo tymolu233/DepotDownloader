@@ -61,7 +61,10 @@ namespace DepotDownloader
             public byte[] DepotKey { get; } = depotKey;
         }
 
-        static bool CreateDirectories(uint depotId, uint depotVersion, out string installDir)
+        // Current app name for folder naming (set in DownloadAppAsync)
+        private static string currentAppName;
+
+        static bool CreateDirectories(uint appId, uint depotId, uint depotVersion, out string installDir)
         {
             installDir = null;
             try
@@ -70,10 +73,10 @@ namespace DepotDownloader
                 {
                     Directory.CreateDirectory(DEFAULT_DOWNLOAD_DIR);
 
-                    var depotPath = Path.Combine(DEFAULT_DOWNLOAD_DIR, depotId.ToString());
-                    Directory.CreateDirectory(depotPath);
-
-                    installDir = Path.Combine(depotPath, depotVersion.ToString());
+                    // Use game name if available, otherwise use app ID
+                    var folderName = !string.IsNullOrWhiteSpace(currentAppName) ? currentAppName : appId.ToString();
+                    
+                    installDir = Path.Combine(DEFAULT_DOWNLOAD_DIR, folderName);
                     Directory.CreateDirectory(installDir);
 
                     Directory.CreateDirectory(Path.Combine(installDir, CONFIG_DIR));
@@ -188,7 +191,11 @@ namespace DepotDownloader
                 return 0;
 
 
+
             var depots = GetSteam3AppSection(appId, EAppInfoSection.Depots);
+            if (depots == null)
+                return 0;
+
             var branches = depots["branches"];
             var node = branches[branch];
 
@@ -206,6 +213,9 @@ namespace DepotDownloader
         static uint GetSteam3DepotProxyAppId(uint depotId, uint appId)
         {
             var depots = GetSteam3AppSection(appId, EAppInfoSection.Depots);
+            if (depots == null)
+                return INVALID_APP_ID;
+
             var depotChild = depots[depotId.ToString()];
 
             if (depotChild == KeyValue.Invalid)
@@ -220,6 +230,9 @@ namespace DepotDownloader
         static async Task<ulong> GetSteam3DepotManifest(uint depotId, uint appId, string branch)
         {
             var depots = GetSteam3AppSection(appId, EAppInfoSection.Depots);
+            if (depots == null)
+                return INVALID_MANIFEST_ID;
+
             var depotChild = depots[depotId.ToString()];
 
             if (depotChild == KeyValue.Invalid)
@@ -305,9 +318,25 @@ namespace DepotDownloader
         {
             var info = GetSteam3AppSection(appId, EAppInfoSection.Common);
             if (info == null)
+            {
+                // Try to get from cache in no-login mode
+                if (AppNameStore.TryGetAppName(appId, out var cachedName))
+                {
+                    return cachedName;
+                }
                 return string.Empty;
+            }
 
-            return info["name"].AsString();
+            var name = info["name"].AsString();
+            
+            // Cache the name for future no-login mode use
+            if (!string.IsNullOrWhiteSpace(name))
+            {
+                AppNameStore.SetAppName(appId, name);
+                AppNameStore.Save();
+            }
+
+            return name;
         }
 
         static string GetSafeAppName(uint appId)
@@ -315,7 +344,15 @@ namespace DepotDownloader
             var appName = GetAppName(appId);
             if (string.IsNullOrWhiteSpace(appName))
             {
-                return appId.ToString();
+                // Try cache as a last resort
+                if (AppNameStore.TryGetAppName(appId, out var cachedName) && !string.IsNullOrWhiteSpace(cachedName))
+                {
+                    appName = cachedName;
+                }
+                else
+                {
+                    return appId.ToString();
+                }
             }
 
             // Remove invalid file name characters
@@ -445,7 +482,7 @@ namespace DepotDownloader
 
         private static async Task DownloadWebFile(uint appId, string fileName, string url)
         {
-            if (!CreateDirectories(appId, 0, out var installDir))
+            if (!CreateDirectories(appId, 0, 0, out var installDir))
             {
                 Console.WriteLine("Error: Unable to create install directories!");
                 return;
@@ -484,25 +521,33 @@ namespace DepotDownloader
                 await steam3.RequestAppInfo(appId);
             }
 
-            // Get safe app name for folder naming
-            var safeAppName = GetSafeAppName(appId);
-
             // Load our configuration data containing the depots currently installed
-            // Store config in a folder named after the game
+            // Store config in a folder named after the app ID (not game name) for consistency in no-login mode
             var configPath = Config.InstallDirectory;
             if (string.IsNullOrWhiteSpace(configPath))
             {
                 configPath = DEFAULT_DOWNLOAD_DIR;
             }
 
-            var appConfigDir = Path.Combine(configPath, CONFIG_DIR, safeAppName);
+            // Use app ID for config directory to ensure it works in no-login mode
+            var appConfigDir = Path.Combine(configPath, CONFIG_DIR, appId.ToString());
             Directory.CreateDirectory(appConfigDir);
             DepotConfigStore.LoadFromFile(Path.Combine(appConfigDir, "depot.config"));
             DepotKeysStore.LoadFromFile(Path.Combine(appConfigDir, "keys.vdf"));
+            
+            // Load app name store BEFORE GetSafeAppName so cached names are available in nologin mode
+            AppNameStore.LoadFromFile(Path.Combine(configPath, CONFIG_DIR, "appnames.txt"));
+
+            // Get safe app name for display purposes (now uses cache if available)
+            var safeAppName = GetSafeAppName(appId);
 
             // Store the app config directory for use by other methods
             currentAppConfigDir = appConfigDir;
+            
+            // Store the app name for folder naming in CreateDirectories
+            currentAppName = safeAppName;
 
+            Console.WriteLine("App: {0} ({1})", safeAppName, appId);
             Console.WriteLine("Config stored in: {0}", appConfigDir);
 
             if (!Config.NoLogin)
@@ -609,10 +654,20 @@ namespace DepotDownloader
                     throw new ContentDownloaderException(string.Format("Couldn't find any depots to download for app {0}", appId));
                 }
 
-                if (depotIdsFound.Count < depotIdsExpected.Count)
+                if (!Config.NoLogin && depotIdsFound.Count < depotIdsExpected.Count)
                 {
                     var remainingDepotIds = depotIdsExpected.Except(depotIdsFound);
                     throw new ContentDownloaderException(string.Format("Depot {0} not listed for app {1}", string.Join(", ", remainingDepotIds), appId));
+                }
+                else if (Config.NoLogin && depotIdsFound.Count < depotIdsExpected.Count)
+                {
+                    // If no login, we can't verify if the depot belongs to the app, so we trust the user.
+                    // Add the missing expected depots to the found list so they are processed.
+                    var remainingDepotIds = depotIdsExpected.Except(depotIdsFound);
+                    foreach (var id in remainingDepotIds)
+                    {
+                        depotIdsFound.Add(id);
+                    }
                 }
             }
 
@@ -679,7 +734,10 @@ namespace DepotDownloader
                 Console.WriteLine("Using cached depot key for {0}", depotId);
                 depotKey = cachedKey;
                 // Also add to Steam3Session for consistency
-                steam3.DepotKeys[depotId] = depotKey;
+                if (steam3 != null)
+                {
+                    steam3.DepotKeys[depotId] = depotKey;
+                }
             }
             else
             {
@@ -705,7 +763,7 @@ namespace DepotDownloader
 
             var uVersion = GetSteam3AppBuildNumber(appId, branch);
 
-            if (!CreateDirectories(depotId, uVersion, out var installDir))
+            if (!CreateDirectories(appId, depotId, uVersion, out var installDir))
             {
                 Console.WriteLine("Error: Unable to create install directories!");
                 return null;
@@ -872,7 +930,7 @@ namespace DepotDownloader
                             connection = cdnPool.GetConnection();
 
                             string cdnToken = null;
-                            if (steam3.CDNAuthTokens.TryGetValue((depot.DepotId, connection.Host), out var authTokenCallbackPromise))
+                            if (steam3 != null && steam3.CDNAuthTokens.TryGetValue((depot.DepotId, connection.Host), out var authTokenCallbackPromise))
                             {
                                 var result = await authTokenCallbackPromise.Task;
                                 cdnToken = result.Token;
@@ -922,7 +980,7 @@ namespace DepotDownloader
                         catch (SteamKitWebRequestException e)
                         {
                             // If the CDN returned 403, attempt to get a cdn auth if we didn't yet
-                            if (e.StatusCode == HttpStatusCode.Forbidden && !steam3.CDNAuthTokens.ContainsKey((depot.DepotId, connection.Host)))
+                            if (e.StatusCode == HttpStatusCode.Forbidden && steam3 != null && !steam3.CDNAuthTokens.ContainsKey((depot.DepotId, connection.Host)))
                             {
                                 await steam3.RequestCDNAuthToken(depot.AppId, depot.DepotId, connection);
 
@@ -1322,7 +1380,7 @@ namespace DepotDownloader
                         connection = cdnPool.GetConnection();
 
                         string cdnToken = null;
-                        if (steam3.CDNAuthTokens.TryGetValue((depot.DepotId, connection.Host), out var authTokenCallbackPromise))
+                        if (steam3 != null && steam3.CDNAuthTokens.TryGetValue((depot.DepotId, connection.Host), out var authTokenCallbackPromise))
                         {
                             var result = await authTokenCallbackPromise.Task;
                             cdnToken = result.Token;
@@ -1351,7 +1409,7 @@ namespace DepotDownloader
                     {
                         // If the CDN returned 403, attempt to get a cdn auth if we didn't yet,
                         // if auth task already exists, make sure it didn't complete yet, so that it gets awaited above
-                        if (e.StatusCode == HttpStatusCode.Forbidden &&
+                        if (e.StatusCode == HttpStatusCode.Forbidden && steam3 != null &&
                             (!steam3.CDNAuthTokens.TryGetValue((depot.DepotId, connection.Host), out var authTokenCallbackPromise) || !authTokenCallbackPromise.Task.IsCompleted))
                         {
                             await steam3.RequestCDNAuthToken(depot.AppId, depot.DepotId, connection);

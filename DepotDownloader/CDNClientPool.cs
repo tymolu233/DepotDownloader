@@ -35,8 +35,9 @@ namespace DepotDownloader
             else
             {
                 var clientConfiguration = SteamConfiguration.Create(config =>
-                    config.WithHttpClientFactory(() => HttpClientFactory.CreateHttpClient()));
-                CDNClient = new Client(clientConfiguration);
+                    config.WithHttpClientFactory(static purpose => HttpClientFactory.CreateHttpClient()));
+                var steamClient = new SteamClient(clientConfiguration);
+                CDNClient = new Client(steamClient);
             }
         }
 
@@ -53,7 +54,8 @@ namespace DepotDownloader
                     var server = new Server();
                     var type = typeof(Server);
                     type.GetProperty("Host")?.SetValue(server, "lancache");
-                    type.GetProperty("Protocol")?.SetValue(server, Protocol.HTTP);
+                    var protocolProp = type.GetProperty("Protocol");
+                    protocolProp?.SetValue(server, Enum.Parse(protocolProp.PropertyType, "HTTP"));
                     type.GetProperty("Type")?.SetValue(server, "CDN");
                     servers.Add(server);
                     return;
@@ -70,14 +72,14 @@ namespace DepotDownloader
                     throw new Exception("Failed to login anonymously for CDN server list.");
                 }
 
-                var servers = await anonymousSession.steamContent.GetServersForSteamPipe();
-                serverList = servers.ToList();
+                var cdnServers = await anonymousSession.steamContent.GetServersForSteamPipe();
+                serverList = cdnServers.ToList();
                 anonymousSession.Disconnect();
             }
             else
             {
-                var servers = await this.steamSession.steamContent.GetServersForSteamPipe();
-                serverList = servers.ToList();
+                var cdnServers = await this.steamSession.steamContent.GetServersForSteamPipe();
+                serverList = cdnServers.ToList();
             }
 
             ProxyServer = serverList.Where(x => x.UseAsProxy).FirstOrDefault();

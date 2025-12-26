@@ -1,7 +1,7 @@
 DepotDownloader
 ===============
 
-Steam depot downloader utilizing the SteamKit2 library. Supports .NET 8.0
+Steam depot downloader utilizing the SteamKit2 library. Supports .NET 9.0
 
 This program must be run from a console, it has no GUI.
 
@@ -45,6 +45,20 @@ By default it will use anonymous account ([view which apps are available on it h
 To use your account, specify the `-username <username>` parameter. Password will be asked interactively if you do
 not use specify the `-password` parameter.
 
+### Downloading using No-Login mode (with cached keys)
+
+If you have previously downloaded a depot with your account, the depot keys and app names are cached locally. You can use `-nologin` mode to download without logging in again:
+
+```powershell
+./DepotDownloader -app <id> -depot <id> -manifest <id> -nologin
+```
+
+For example: `./DepotDownloader -app 1621690 -depot 1621691 -manifest 8005417444855465497 -nologin`
+
+**Note:** This requires:
+- A valid depot key cached in `.DepotDownloader/<appId>/keys.vdf`
+- A valid manifest file cached locally
+
 ### Downloading a workshop item using pubfile id
 ```powershell
 ./DepotDownloader -app <id> -pubfile <id> [-username <username> [-password <password>]]
@@ -70,6 +84,7 @@ Parameter               | Description
 `-remember-password`    | if set, remember the password for subsequent logins of this user. (Use `-username <username> -remember-password` as login credentials)
 `-qr`                   | display a login QR code to be scanned with the Steam mobile app
 `-no-mobile`            | prefer entering a 2FA code instead of prompting to accept in the Steam mobile app.
+`-nologin`              | use cached depot keys and manifests without logging in to Steam. Requires prior download with account.
 `-loginid <#>`          | a unique 32-bit integer Steam LogonID in decimal, required if running multiple instances of DepotDownloader concurrently.
 
 #### Downloading
@@ -110,6 +125,17 @@ Parameter               | Description
 `-debug`                | enable verbose debug logging.
 `-V` or `--version`     | print version and runtime.
 
+## Directory Structure
+
+When downloading content, files are organized as follows:
+
+- **Game files**: Downloaded to `depots/<Game Name>/` (e.g., `depots/Core Keeper/CoreKeeper.exe`)
+- **Config files**: Stored in `depots/.DepotDownloader/<AppID>/` including:
+  - `depot.config` - Installed depot information
+  - `keys.vdf` - Cached depot decryption keys
+  - Manifest files (`.manifest`)
+- **App name cache**: Stored in `depots/.DepotDownloader/appnames.txt` for use in no-login mode
+
 ## Frequently Asked Questions
 
 ### Why am I prompted to enter a 2-factor code every time I run the app?
@@ -129,3 +155,6 @@ Steam allows developers to block downloading old manifests, in which case no man
 ### Why am I getting slow download speeds and frequent connection timeouts?
 When downloading old builds, cache server may not have the chunks readily available which makes downloading slower.
 Try increasing `-max-downloads` to saturate the network more.
+
+### How does the -nologin mode work?
+When you first download a depot with your account, the depot decryption key and app name are cached locally. The `-nologin` mode allows you to download the same depot again without logging in, as long as you provide the exact `-app`, `-depot`, and `-manifest` parameters. This is useful for automation and repeated downloads.

@@ -479,7 +479,10 @@ namespace DepotDownloader
             cdnPool = new CDNClientPool(steam3, appId);
 
             // Request app info first to get the app name
-            await steam3?.RequestAppInfo(appId);
+            if (steam3 != null && !Config.NoLogin)
+            {
+                await steam3.RequestAppInfo(appId);
+            }
 
             // Get safe app name for folder naming
             var safeAppName = GetSafeAppName(appId);
@@ -495,25 +498,29 @@ namespace DepotDownloader
             var appConfigDir = Path.Combine(configPath, CONFIG_DIR, safeAppName);
             Directory.CreateDirectory(appConfigDir);
             DepotConfigStore.LoadFromFile(Path.Combine(appConfigDir, "depot.config"));
+            DepotKeysStore.LoadFromFile(Path.Combine(appConfigDir, "keys.vdf"));
 
             // Store the app config directory for use by other methods
             currentAppConfigDir = appConfigDir;
 
             Console.WriteLine("Config stored in: {0}", appConfigDir);
 
-            if (!await AccountHasAccess(appId, appId))
+            if (!Config.NoLogin)
             {
-                if (steam3.steamUser.SteamID.AccountType != EAccountType.AnonUser && await steam3.RequestFreeAppLicense(appId))
+                if (!await AccountHasAccess(appId, appId))
                 {
-                    Console.WriteLine("Obtained FreeOnDemand license for app {0}", appId);
+                    if (steam3.steamUser.SteamID.AccountType != EAccountType.AnonUser && await steam3.RequestFreeAppLicense(appId))
+                    {
+                        Console.WriteLine("Obtained FreeOnDemand license for app {0}", appId);
 
-                    // Fetch app info again in case we didn't get it fully without a license.
-                    await steam3.RequestAppInfo(appId, true);
-                }
-                else
-                {
-                    var contentName = GetAppName(appId);
-                    throw new ContentDownloaderException(string.Format("App {0} ({1}) is not available from this account.", appId, contentName));
+                        // Fetch app info again in case we didn't get it fully without a license.
+                        await steam3.RequestAppInfo(appId, true);
+                    }
+                    else
+                    {
+                        var contentName = GetAppName(appId);
+                        throw new ContentDownloaderException(string.Format("App {0} ({1}) is not available from this account.", appId, contentName));
+                    }
                 }
             }
 
@@ -635,12 +642,12 @@ namespace DepotDownloader
 
         static async Task<DepotDownloadInfo> GetDepotInfo(uint depotId, uint appId, ulong manifestId, string branch)
         {
-            if (steam3 != null && appId != INVALID_APP_ID)
+            if (steam3 != null && appId != INVALID_APP_ID && !Config.NoLogin)
             {
                 await steam3.RequestAppInfo(appId);
             }
 
-            if (!await AccountHasAccess(appId, depotId))
+            if (!Config.NoLogin && !await AccountHasAccess(appId, depotId))
             {
                 Console.WriteLine("Depot {0} is not available from this account.", depotId);
 
@@ -666,8 +673,8 @@ namespace DepotDownloader
 
             byte[] depotKey;
 
-            // Try to load depot key from local config first
-            if (DepotConfigStore.Instance.DepotKeys.TryGetValue(depotId, out var cachedKey))
+            // Try to load depot key from local VDF config first
+            if (DepotKeysStore.TryGetDepotKey(depotId, out var cachedKey))
             {
                 Console.WriteLine("Using cached depot key for {0}", depotId);
                 depotKey = cachedKey;
@@ -676,6 +683,12 @@ namespace DepotDownloader
             }
             else
             {
+                if (Config.NoLogin)
+                {
+                    Console.WriteLine("No valid depot key for {0} in local cache, and login is disabled.", depotId);
+                    return null;
+                }
+
                 // Request depot key from Steam
                 await steam3.RequestDepotKey(depotId, appId);
                 if (!steam3.DepotKeys.TryGetValue(depotId, out depotKey))
@@ -684,10 +697,10 @@ namespace DepotDownloader
                     return null;
                 }
 
-                // Save depot key to local config
-                DepotConfigStore.Instance.DepotKeys[depotId] = depotKey;
-                DepotConfigStore.Save();
-                Console.WriteLine("Saved depot key for {0} to config", depotId);
+                // Save depot key to local VDF config
+                DepotKeysStore.SetDepotKey(depotId, depotKey);
+                DepotKeysStore.Save();
+                Console.WriteLine("Saved depot key for {0} to keys.vdf", depotId);
             }
 
             var uVersion = GetSteam3AppBuildNumber(appId, branch);

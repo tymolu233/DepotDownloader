@@ -69,8 +69,17 @@ namespace DepotDownloader
             ContentDownloader.Config.RememberPassword = HasParameter(args, "-remember-password");
             ContentDownloader.Config.UseQrCode = HasParameter(args, "-qr");
             ContentDownloader.Config.SkipAppConfirmation = HasParameter(args, "-no-mobile");
+            ContentDownloader.Config.NoLogin = HasParameter(args, "-nologin");
 
-            if (username == null)
+            if (ContentDownloader.Config.NoLogin)
+            {
+                if (username != null || ContentDownloader.Config.UseQrCode)
+                {
+                    Console.WriteLine("Error: -nologin can not be used with -username or -qr.");
+                    return 1;
+                }
+            }
+            else if (username == null)
             {
                 if (ContentDownloader.Config.RememberPassword && !ContentDownloader.Config.UseQrCode)
                 {
@@ -309,7 +318,28 @@ namespace DepotDownloader
 
                 PrintUnconsumedArgs(args);
 
-                if (InitializeSteam(username, password))
+                if (ContentDownloader.Config.NoLogin)
+                {
+                    // No login mode - use cached depot keys and manifests
+                    Console.WriteLine("Using no-login mode with cached depot keys and manifests.");
+                    try
+                    {
+                        await ContentDownloader.DownloadAppAsync(appId, depotManifestIds, branch, os, arch, language, lv, isUGC).ConfigureAwait(false);
+                    }
+                    catch (Exception ex) when (
+                        ex is ContentDownloaderException
+                        || ex is OperationCanceledException)
+                    {
+                        Console.WriteLine(ex.Message);
+                        return 1;
+                    }
+                    catch (Exception e)
+                    {
+                        Console.WriteLine("Download failed to due to an unhandled exception: {0}", e.Message);
+                        throw;
+                    }
+                }
+                else if (InitializeSteam(username, password))
                 {
                     try
                     {
@@ -529,6 +559,9 @@ namespace DepotDownloader
             Console.WriteLine("  -max-downloads <#>       - maximum number of chunks to download concurrently. (default: 8).");
             Console.WriteLine("  -loginid <#>             - a unique 32-bit integer Steam LogonID in decimal, required if running multiple instances of DepotDownloader concurrently.");
             Console.WriteLine("  -use-lancache            - forces downloads over the local network via a Lancache instance.");
+            Console.WriteLine();
+            Console.WriteLine("  -nologin                 - download using cached depot keys and manifests without logging into Steam.");
+            Console.WriteLine("                             requires previously cached keys.vdf and manifest files.");
             Console.WriteLine();
             Console.WriteLine("  -debug                   - enable verbose debug logging.");
             Console.WriteLine("  -V or --version          - print version and runtime.");

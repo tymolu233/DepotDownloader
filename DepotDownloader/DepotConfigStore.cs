@@ -15,15 +15,11 @@ namespace DepotDownloader
         [ProtoMember(1)]
         public Dictionary<uint, ulong> InstalledManifestIDs { get; private set; }
 
-        [ProtoMember(2, IsRequired = false)]
-        public Dictionary<uint, byte[]> DepotKeys { get; private set; }
-
         string FileName;
 
         DepotConfigStore()
         {
             InstalledManifestIDs = [];
-            DepotKeys = [];
         }
 
         static bool Loaded

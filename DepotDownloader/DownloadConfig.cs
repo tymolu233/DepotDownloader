@@ -32,5 +32,8 @@ namespace DepotDownloader
 
         public bool UseQrCode { get; set; }
         public bool SkipAppConfirmation { get; set; }
+
+        // Download using cached depot keys and manifests without logging into Steam
+        public bool NoLogin { get; set; }
     }
 }
